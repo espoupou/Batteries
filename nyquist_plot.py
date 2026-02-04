@@ -1,9 +1,10 @@
+import os
 import tkinter as tk
 from tkinter import filedialog, messagebox
 import pandas as pd
 
 import matplotlib
-matplotlib.use("TkAgg")  # force un rendu intégré Tkinter (évite les docks PyCharm)
+matplotlib.use("TkAgg")
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 
@@ -45,47 +46,80 @@ def read_3col_file(path: str) -> pd.DataFrame:
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Nyquist intégré - Re vs (+/-)Im")
-        self.geometry("900x600")
-        self.minsize(800, 520)
+        self.title("Comparaison Nyquist (jusqu'à 3 machines)")
+        self.geometry("980x650")
+        self.minsize(880, 560)
 
-        self.file_path = tk.StringVar(value="Aucun fichier sélectionné")
         self.neg_im = tk.BooleanVar(value=True)
         self.status = tk.StringVar(value="Prêt.")
-        self.last_df = None
 
-        # ====== Haut (contrôles) ======
+        # 3 slots: path, label, enabled, df cache
+        self.slots = []
+        for _ in range(3):
+            self.slots.append({
+                "path": tk.StringVar(value=""),
+                "label": tk.StringVar(value=""),
+                "enabled": tk.BooleanVar(value=True),
+                "df": None
+            })
+
+        # ===== Controls =====
         top = tk.Frame(self)
         top.pack(fill="x", padx=12, pady=10)
 
-        tk.Label(top, text="Fichier (freq R Im):").grid(row=0, column=0, sticky="w")
-        entry = tk.Entry(top, textvariable=self.file_path, state="readonly", width=80)
-        entry.grid(row=1, column=0, sticky="we", pady=(4, 0))
-        tk.Button(top, text="Choisir...", command=self.choose_file).grid(row=1, column=1, padx=(10, 0), pady=(4, 0))
+        tk.Label(top, text="Sélectionne jusqu'à 3 fichiers (freq R Im) et superpose les plots :").grid(
+            row=0, column=0, columnspan=5, sticky="w"
+        )
+
+        for i in range(3):
+            row = 1 + i
+            tk.Label(top, text=f"Fichier {i+1}:").grid(row=row, column=0, sticky="w", pady=(6, 0))
+
+            entry = tk.Entry(top, textvariable=self.slots[i]["path"], state="readonly", width=70)
+            entry.grid(row=row, column=1, sticky="we", padx=(6, 6), pady=(6, 0))
+
+            tk.Button(top, text="Choisir...", command=lambda idx=i: self.choose_file(idx)).grid(
+                row=row, column=2, padx=(0, 6), pady=(6, 0)
+            )
+
+            tk.Button(top, text="X", width=3, command=lambda idx=i: self.clear_file(idx)).grid(
+                row=row, column=3, padx=(0, 10), pady=(6, 0)
+            )
+
+            lbl_entry = tk.Entry(top, textvariable=self.slots[i]["label"], width=18)
+            lbl_entry.grid(row=row, column=4, sticky="e", pady=(6, 0))
+            if not self.slots[i]["label"].get():
+                self.slots[i]["label"].set(f"Machine {i+1}")
+
+            tk.Checkbutton(top, text="Actif", variable=self.slots[i]["enabled"],
+                           command=self.refresh_plot_if_possible).grid(
+                row=row, column=5, sticky="w", padx=(8, 0), pady=(6, 0)
+            )
+
+        top.columnconfigure(1, weight=1)
+
+        opts = tk.Frame(self)
+        opts.pack(fill="x", padx=12, pady=(0, 6))
 
         tk.Checkbutton(
-            top,
+            opts,
             text="Tracer -Im (décoché = tracer Im)",
             variable=self.neg_im,
             command=self.refresh_plot_if_possible
-        ).grid(row=2, column=0, sticky="w", pady=(8, 0))
+        ).pack(side="left")
 
-        btns = tk.Frame(top)
-        btns.grid(row=2, column=1, sticky="e", pady=(8, 0))
-        tk.Button(btns, text="Tracer", width=12, command=self.run_plot).pack(side="left")
-        tk.Button(btns, text="Exporter PNG", width=12, command=self.export_png).pack(side="left", padx=8)
+        tk.Button(opts, text="Tracer / Mettre à jour", width=18, command=self.run_plot).pack(side="right")
+        tk.Button(opts, text="Exporter PNG", width=14, command=self.export_png).pack(side="right", padx=8)
 
-        top.columnconfigure(0, weight=1)
+        tk.Label(self, textvariable=self.status, anchor="w").pack(fill="x", padx=12, pady=(0, 6))
 
-        tk.Label(self, textvariable=self.status, anchor="w").pack(fill="x", padx=12)
-
-        # ====== Zone graphique (embed) ======
+        # ===== Plot embed =====
         plot_frame = tk.Frame(self, bd=1, relief="groove")
         plot_frame.pack(fill="both", expand=True, padx=12, pady=10)
 
         self.fig = Figure(figsize=(6, 4), dpi=100)
         self.ax = self.fig.add_subplot(111)
-        self.ax.set_title("Nyquist (scatter)")
+        self.ax.set_title("Nyquist (scatter) : Re vs -Im")
         self.ax.set_xlabel("Re (R)")
         self.ax.set_ylabel("-Im")
         self.ax.grid(True)
@@ -95,73 +129,121 @@ class App(tk.Tk):
 
         toolbar = NavigationToolbar2Tk(self.canvas, plot_frame)
         toolbar.update()
-
-        # Astuce: rendre le layout plus propre
         toolbar.pack(fill="x")
 
         self.canvas.draw()
 
-    def choose_file(self):
+        # Markers différents (sans imposer de couleurs)
+        self.markers = ["o", "s", "^"]
+
+    def choose_file(self, idx: int):
         path = filedialog.askopenfilename(
-            title="Sélectionner un fichier",
+            title=f"Sélectionner le fichier {idx+1}",
             filetypes=[
                 ("Fichiers texte", "*.txt *.dat *.csv *.tsv"),
                 ("Tous les fichiers", "*.*")
             ],
         )
         if path:
-            self.file_path.set(path)
-            self.status.set("Fichier sélectionné. Cliquez sur Tracer.")
-            self.last_df = None
+            self.slots[idx]["path"].set(path)
+            if not self.slots[idx]["label"].get().strip():
+                self.slots[idx]["label"].set(os.path.splitext(os.path.basename(path))[0])
+            self.slots[idx]["df"] = None  # reset cache
+            self.status.set("Fichier sélectionné. Clique sur Tracer / Mettre à jour.")
+
+    def clear_file(self, idx: int):
+        self.slots[idx]["path"].set("")
+        self.slots[idx]["df"] = None
+        self.status.set(f"Fichier {idx+1} supprimé. Clique sur Tracer / Mettre à jour.")
+        self.refresh_plot_if_possible()
 
     def run_plot(self):
-        path = self.file_path.get()
-        if not path or path == "Aucun fichier sélectionné":
-            messagebox.showwarning("Fichier manquant", "Veuillez sélectionner un fichier.")
+        any_loaded = False
+        msgs = []
+
+        # Load / cache DFs
+        for i, slot in enumerate(self.slots):
+            path = slot["path"].get().strip()
+            if not path:
+                slot["df"] = None
+                continue
+
+            try:
+                df = read_3col_file(path)
+                if df.empty:
+                    slot["df"] = None
+                    msgs.append(f"F{i+1}: aucun point valide")
+                else:
+                    slot["df"] = df
+                    any_loaded = True
+                    msgs.append(f"F{i+1}: {len(df)} points")
+            except Exception as e:
+                slot["df"] = None
+                msgs.append(f"F{i+1}: erreur lecture ({e})")
+
+        if not any_loaded:
+            messagebox.showwarning("Aucune donnée", "Aucun fichier valide chargé.")
+            self.clear_plot()
+            self.status.set("Aucune donnée valide.")
             return
 
-        try:
-            df = read_3col_file(path)
-            if df.empty:
-                messagebox.showerror("Erreur", "Aucune donnée valide détectée (R/Im).")
-                return
+        self.draw_overlay()
+        self.status.set(" | ".join(msgs) + "  —  Tracé OK.")
 
-            self.last_df = df
-            self.draw_nyquist(df)
-            self.status.set(f"Tracé OK ({len(df)} points).")
-
-        except Exception as e:
-            messagebox.showerror("Erreur", f"Impossible de lire/Tracer le fichier.\n\nDétail:\n{e}")
-
-    def draw_nyquist(self, df: pd.DataFrame):
-        use_neg = self.neg_im.get()
-        y = -df["Im"] if use_neg else df["Im"]
-
+    def clear_plot(self):
         self.ax.clear()
-        self.ax.scatter(df["R"], y, s=14)
+        use_neg = self.neg_im.get()
+        self.ax.set_title("Nyquist (scatter) : Re vs " + ("Im" if use_neg else "-Im"))
         self.ax.set_xlabel("Re (R)")
         self.ax.set_ylabel("-Im" if use_neg else "Im")
-        self.ax.set_title("Nyquist (scatter) : Re vs " + ("-Im" if use_neg else "Im"))
         self.ax.grid(True)
-        self.ax.set_aspect("equal", adjustable="datalim")
+        self.canvas.draw()
 
+    def draw_overlay(self):
+        use_neg = self.neg_im.get()
+        self.ax.clear()
+
+        plotted = 0
+        for i, slot in enumerate(self.slots):
+            if not slot["enabled"].get():
+                continue
+            df = slot["df"]
+            if df is None or df.empty:
+                continue
+
+            y = -df["Im"] if use_neg else df["Im"]
+            label = slot["label"].get().strip() or f"Machine {i+1}"
+
+            self.ax.scatter(df["R"], y, s=14, marker=self.markers[i], label=label)
+            plotted += 1
+
+        self.ax.set_title("Nyquist (scatter) : Re vs " + ("Im" if use_neg else "-Im"))
+        self.ax.set_xlabel("Re (R)")
+        self.ax.set_ylabel("-Im" if use_neg else "Im")
+        self.ax.grid(True)
+
+        if plotted > 0:
+            self.ax.legend()
+
+        self.ax.set_aspect("equal", adjustable="datalim")
         self.fig.tight_layout()
         self.canvas.draw()
 
     def refresh_plot_if_possible(self):
-        if self.last_df is not None and not self.last_df.empty:
-            self.draw_nyquist(self.last_df)
+        # Redessine si au moins un df est chargé (sans recharger les fichiers)
+        if any(slot["df"] is not None and not slot["df"].empty for slot in self.slots):
+            self.draw_overlay()
 
     def export_png(self):
-        if self.last_df is None:
-            messagebox.showinfo("Rien à exporter", "Veuillez d'abord tracer le graphique.")
+        if not any(slot["df"] is not None and not slot["df"].empty and slot["enabled"].get() for slot in self.slots):
+            messagebox.showinfo("Rien à exporter", "Veuillez d'abord tracer au moins un plot actif.")
             return
 
         save_path = filedialog.asksaveasfilename(
             title="Enregistrer en PNG",
             defaultextension=".png",
             filetypes=[("Image PNG", "*.png")],
-            initialfile="nyquist.png",
+            initialfile="nyquist_compare.png",
         )
         if not save_path:
             return

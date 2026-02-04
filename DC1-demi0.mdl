@@ -1,0 +1,79 @@
+ZView Circuit Model:          2.0
+  IOPT:                       0
+  DINP:                       1
+  DFIT:                       1
+  PINP:                       4
+  PFIT:                       4
+  FREEQ:                      1
+  NEG:                        1
+  FUN:                        99
+  DATATYPE:                   0
+  IPAR:                       0
+  IFP:                        0
+  IRE:                        0
+  CELCAP:                     0
+  ROE:                        0
+  ATEMP:                      293
+  M:                          0
+  N:                          34
+  MAXFEV:                     100
+  NPRINT:                     9
+  IRCH:                       -3
+  MODE:                       0
+  ICP:                        0
+  IPRINT:                     1
+  IGACC:                      2
+  WEIGHTU:                    0
+  WEIGHTX:                    1
+  WEIGHTSSQMETHOD:            2
+  MAX FREQ:                   0,001
+  MIN FREQ:                   1000000
+  KK MAX FREQ:                10000000000
+  KK MIN FREQ:                1E-6
+  FIT MODE:                   1
+  RANGE MODE:                 1
+  FIT BEEP:                   0
+  Batch DCBias:               0
+  Batch Previous:             0
+  Batch Spectra:              0
+  Batch Print:                0
+  Batch Output
+  Batch Order:                0
+  Batch ErrorPercent:         0
+  Batch Time:                 0
+End ZView:                    2.0
+Begin Circuit Model:          9
+  Element #0 Type:            1
+  Element #0 Name:            R1
+  Element #0,0 Name:          R
+  Element #0,0 Value:         595,5
+  Element #0,0 Free:          1
+  Element #1 Type:            -1
+  Element #1 Name:            Begin_Parallel
+  Element #2 Type:            1
+  Element #2 Name:            R2
+  Element #2,0 Name:          R
+  Element #2,0 Value:         995,3
+  Element #2,0 Free:          1
+  Element #3 Type:            2
+  Element #3 Name:            C1
+  Element #3,1 Name:          T
+  Element #3,1 Value:         7,89919999999998E-9
+  Element #3,1 Free:          1
+  Element #4 Type:            -2
+  Element #4 Name:            End_Parallel
+  Element #5 Type:            -1
+  Element #5 Name:            Begin_Parallel
+  Element #6 Type:            1
+  Element #6 Name:            R3
+  Element #6,0 Name:          R
+  Element #6,0 Value:         3561
+  Element #6,0 Free:          1
+  Element #7 Type:            2
+  Element #7 Name:            C2
+  Element #7,1 Name:          T
+  Element #7,1 Value:         2,2008E-6
+  Element #7,1 Free:          1
+  Element #8 Type:            -2
+  Element #8 Name:            End_Parallel
+End Circuit Model:            9

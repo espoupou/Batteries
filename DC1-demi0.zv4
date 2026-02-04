@@ -1,0 +1,192 @@
+ZView Setup File:             2.0
+Begin Data List
+  File Count:                 1
+  AutoColor Type:             1
+  AutoLine Type:              0
+  AutoMark Type:              0
+  AutoLegend Type:            1
+  AutoLegend Source:          0
+  LastColor Type:             0
+  LastLine Type:              1
+  LastMark Type:              0
+  Merge Type:                 -1
+End Data List
+Begin Data File 1
+  Data File:                  D:\Lauriana-19-01-26-DC01-demi-0_C02.txt
+  Color Type:                 0
+  Line Type:                  1
+  Mark Type:                  0
+  ScalingType:                1
+  Scaling:                    1
+  CZero:                      1
+  Legend:                     Lauriana-19-01-26-DC01-demi-0_C02.txt
+End Data File 1
+Begin Graph Info
+  AxisFont Name:              Arial
+  AxisFont Size:              16
+  AxisFont Color:             0
+  AxisFont Bold:              0
+  AxisFont Italic:            0
+  LabelFont Name:             Arial
+  LabelFont Size:             18
+  LabelFont Color:            0
+  LabelFont Bold:             0
+  LabelFont Italic:           0
+  LegendFont Name:            Arial
+  LegendFont Size:            14
+  LegendFont Color:           0
+  LegendFont Bold:            0
+  LegendFont Italic:          0
+  TitleFont Name:             Arial
+  TitleFont Size:             22
+  TitleFont Color:            0
+  TitleFont Bold:             0
+  TitleFont Italic:           0
+  CommentFont Name:           Arial
+  CommentFont Size:           14
+  CommentFont Color:          0
+  CommentFont Bold:           0
+  CommentFont Italic:         0
+  MajorTic Size:              3
+  MinorTic Size:              2
+  Marker Size:                3
+  Line Width:                 0,4
+  GridLine Type:              1
+  BigMargin Size:             1500
+  SmallMargin Size:           1000
+  Orientation:                2
+  PageScale Type:             0
+  ActiveLine Type:            1
+  ActiveMark Type:            1
+  FitLine Type:               1
+  FitMark Type:               0
+  ZoomtoData:                 0
+  DisplayScaleType:           0
+End Graph Info
+Begin Graph 0:                2
+  Graph No:                   1
+  Left:                       766
+  Top:                        0
+  Width:                      766
+  Height:                     749
+  Maximized:                  0
+  Begin Axis 0
+    Visible:                  1
+    Isotropic:                0
+    LegendX:                  4384
+    LegendY:                  7074
+    XVisible:                 1
+    XLocation:                1
+    XGrid:                    0
+    XScaleType:               1
+    XMin:                     0,1
+    XMax:                     100000
+    XOrg:                     0
+    XLabelTic:                2000
+    XMarkTic:                 1000
+    XUnit:                    1
+    XTextX:                   4384
+    XTextY:                   4134
+    XText Lines:              1
+    XText #1:                 Frequency (Hz)
+    YVisible:                 1
+    YLocation:                1
+    YScaleType:               1
+    YGrid:                    0
+    YMin:                     1000
+    YMax:                     10000
+    YOrg:                     0
+    YLabelTic:                2000
+    YMarkTic:                 1000
+    YUnit:                    302
+    YTextX:                   300
+    YTextY:                   6201
+    YText Lines:              1
+    YText #1:                 |Z|
+    TitleX:                   0
+    TitleY:                   0
+    Title Lines:              0
+  End Axis 0
+  Begin Axis 1
+    Visible:                  1
+    Isotropic:                0
+    LegendX:                  4384
+    LegendY:                  3440
+    XVisible:                 1
+    XLocation:                1
+    XGrid:                    0
+    XScaleType:               1
+    XMin:                     0,1
+    XMax:                     100000
+    XOrg:                     0
+    XLabelTic:                2000
+    XMarkTic:                 1000
+    XUnit:                    1
+    XTextX:                   4384
+    XTextY:                   500
+    XText Lines:              1
+    XText #1:                 Frequency (Hz)
+    YVisible:                 1
+    YLocation:                1
+    YScaleType:               0
+    YGrid:                    0
+    YMin:                     0
+    YMax:                     -60
+    YOrg:                     0
+    YLabelTic:                15
+    YMarkTic:                 5
+    YUnit:                    352
+    YTextX:                   300
+    YTextY:                   2567
+    YText Lines:              1
+    YText #1:                 theta
+    TitleX:                   0
+    TitleY:                   0
+    Title Lines:              0
+  End Axis 1
+End Graph 0:                  2
+Begin Graph 1:                1
+  Graph No:                   1
+  Left:                       0
+  Top:                        0
+  Width:                      766
+  Height:                     749
+  Maximized:                  0
+  Begin Axis 0
+    Visible:                  1
+    Isotropic:                1
+    LegendX:                  4384
+    LegendY:                  7074
+    XVisible:                 1
+    XLocation:                1
+    XGrid:                    0
+    XScaleType:               0
+    XMin:                     0
+    XMax:                     10000
+    XOrg:                     0
+    XLabelTic:                2000
+    XMarkTic:                 1000
+    XUnit:                    1301
+    XTextX:                   4384
+    XTextY:                   500
+    XText Lines:              1
+    XText #1:                 Z'
+    YVisible:                 1
+    YLocation:                1
+    YScaleType:               0
+    YGrid:                    0
+    YMin:                     0
+    YMax:                     -10000
+    YOrg:                     0
+    YLabelTic:                2000
+    YMarkTic:                 1000
+    YUnit:                    1351
+    YTextX:                   300
+    YTextY:                   4384
+    YText Lines:              1
+    YText #1:                 Z''
+    TitleX:                   0
+    TitleY:                   0
+    Title Lines:              0
+  End Axis 0
+End Graph 1:                  1
