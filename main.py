@@ -1,8 +1,8 @@
 import os
 import re
-import tkinter as tk
-from tkinter import filedialog, messagebox
 import pandas as pd
+import tkinter as tk
+from tkinter import filedialog, messagebox, simpledialog
 
 import matplotlib
 matplotlib.use("TkAgg")
@@ -10,197 +10,74 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 
 
-def read_freq_R_Im(path: str) -> pd.DataFrame:
-    """
-    Lit un fichier EIS et extrait les colonnes freq, R, Im à partir des en-têtes,
-    peu importe leur ordre.
+from eis_core import read_freq_R_Im, remove_warburg_wo
 
-    Retourne un DataFrame avec colonnes normalisées :
-        - freq
-        - R
-        - Im
+class WarburgDialog(simpledialog.Dialog):
+    def __init__(self, parent, available_slots):
+        self.available_slots = available_slots
+        self.result = None
+        super().__init__(parent, title="Suppression diffusion Warburg (Wo)")
 
-    Convention interne :
-        Im = partie imaginaire réelle de Z
-        Donc si le fichier contient '-Im(Z)', la colonne est re-signée en Im = -(-Im).
-    """
-
-    def clean_header(s: str) -> str:
-        s = str(s).strip().lower()
-        s = s.replace("−", "-").replace("–", "-")
-        s = s.replace("[", "(").replace("]", ")")
-        s = s.replace("{", "(").replace("}", ")")
-        s = re.sub(r"\s+", "", s)
-        return s
-
-    def classify_header(col: str):
-        """
-        Retourne (role, sign_im)
-        role in {"freq", "R", "Im", None}
-        sign_im utile seulement pour Im:
-            +1 si la colonne contient déjà Im
-            -1 si la colonne contient -Im
-        """
-        raw = str(col).strip().lower().replace("−", "-").replace("–", "-")
-        s = clean_header(col)
-
-        # ---- fréquence
-        if (
-            "freq" in s
-            or s in {"f", "frequency", "frequency(hz)", "f(Hz)".lower()}
-        ):
-            return "freq", None
-
-        # ---- partie réelle de Z
-        # on vise bien Z, pas Y, C, Conductivity, etc.
-        if (
-            "re(z" in raw
-            or "real(z" in raw
-            or "rez" in s
-            or s.startswith("z'")
-            or s == "z'"
-            or "zreal" in s
-        ):
-            return "R", None
-
-        # ---- partie imaginaire de Z
-        # cas explicite -Im(Z)
-        if (
-            "-im(z" in raw
-            or raw.startswith("-im")
-            or "-z''" in raw
-            or "-zimag" in s
-        ):
-            return "Im", -1
-
-        # cas Im(Z)
-        if (
-            "im(z" in raw
-            or "imag(z" in raw
-            or "imz" in s
-            or "z''" in raw
-            or "zimag" in s
-        ):
-            return "Im", +1
-
-        return None, None
-
-    def detect_header_and_sep(path: str, max_lines: int = 80):
-        """
-        Cherche la ligne d'en-tête contenant freq + R + Im.
-        Retourne:
-            header_line_idx, sep
-        sep ∈ {'\\t', ';', r'\\s+'}
-        """
-        with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            lines = f.readlines()
-
-        for i, line in enumerate(lines[:max_lines]):
-            stripped = line.strip()
-            if not stripped:
-                continue
-
-            # Détection séparateur probable
-            if "\t" in line:
-                parts = [p.strip() for p in line.rstrip("\n\r").split("\t")]
-                sep = "\t"
-            elif ";" in line:
-                parts = [p.strip() for p in line.rstrip("\n\r").split(";")]
-                sep = ";"
-            else:
-                parts = re.split(r"\s+", stripped)
-                sep = r"\s+"
-
-            found = set()
-            for p in parts:
-                role, _ = classify_header(p)
-                if role:
-                    found.add(role)
-
-            if {"freq", "R", "Im"}.issubset(found):
-                return i, sep
-
-        return None, None
-
-    # Chercher une ligne d'en-tête
-    header_idx, sep = detect_header_and_sep(path)
-
-    if header_idx is not None:
-        df = pd.read_csv(
-            path,
-            sep=sep,
-            skiprows=header_idx,
-            header=0,
-            dtype=str,
-            engine="python",
+    def body(self, master):
+        tk.Label(master, text="Slot cible :").grid(row=0, column=0, sticky="w", padx=6, pady=6)
+        self.slot_var = tk.StringVar(value=str(self.available_slots[0]))
+        tk.OptionMenu(master, self.slot_var, *[str(i) for i in self.available_slots]).grid(
+            row=0, column=1, sticky="we", padx=6, pady=6
         )
 
-        # Identifier les colonnes utiles
-        selected = {}
-        im_sign = +1
+        tk.Label(master, text="Wo-R :").grid(row=1, column=0, sticky="w", padx=6, pady=6)
+        self.wor_entry = tk.Entry(master)
+        self.wor_entry.grid(row=1, column=1, sticky="we", padx=6, pady=6)
 
-        for col in df.columns:
-            role, sign = classify_header(col)
-            if role and role not in selected:
-                selected[role] = col
-                if role == "Im":
-                    im_sign = sign if sign is not None else +1
+        tk.Label(master, text="Wo-T :").grid(row=2, column=0, sticky="w", padx=6, pady=6)
+        self.wot_entry = tk.Entry(master)
+        self.wot_entry.grid(row=2, column=1, sticky="we", padx=6, pady=6)
 
-        missing = [k for k in ["freq", "R", "Im"] if k not in selected]
-        if missing:
-            raise ValueError(f"Colonnes introuvables par entête: {missing}")
+        tk.Label(master, text="Wo-P :").grid(row=3, column=0, sticky="w", padx=6, pady=6)
+        self.wop_entry = tk.Entry(master)
+        self.wop_entry.grid(row=3, column=1, sticky="we", padx=6, pady=6)
 
-        out = df[[selected["freq"], selected["R"], selected["Im"]]].copy()
-        out.columns = ["freq", "R", "Im"]
+        tk.Label(master, text="fmin (optionnel) :").grid(row=4, column=0, sticky="w", padx=6, pady=6)
+        self.fmin_entry = tk.Entry(master)
+        self.fmin_entry.grid(row=4, column=1, sticky="we", padx=6, pady=6)
 
-        # Conversion numérique
-        for c in ["freq", "R", "Im"]:
-            out[c] = out[c].astype(str).str.replace(",", ".", regex=False)
-            out[c] = pd.to_numeric(out[c], errors="coerce")
+        self.trim_pos_im = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            master,
+            text="Supprimer les points corrigés avec Im > 0",
+            variable=self.trim_pos_im
+        ).grid(row=5, column=0, columnspan=2, sticky="w", padx=6, pady=6)
 
-        # Si le fichier donnait -Im, on reconstruit Im
-        if im_sign == -1:
-            out["Im"] = -out["Im"]
+        master.columnconfigure(1, weight=1)
+        return self.wor_entry
 
-        out = out.dropna(subset=["freq", "R", "Im"]).reset_index(drop=True)
-        return out
-
-    # Fallback : ancien mode "3 colonnes numériques"
-    #    utile si le fichier n'a pas d'entête exploitable
-    with open(path, "r", encoding="utf-8", errors="ignore") as f:
-        first = f.readline().strip().split()
-
-    def is_num(x: str) -> bool:
+    def validate(self):
         try:
-            float(x.replace(",", "."))
+            wor = float(self.wor_entry.get().strip().replace(",", "."))
+            wot = float(self.wot_entry.get().strip().replace(",", "."))
+            wop = float(self.wop_entry.get().strip().replace(",", "."))
+
+            fmin_txt = self.fmin_entry.get().strip()
+            fmin = None if not fmin_txt else float(fmin_txt.replace(",", "."))
+
+            self.result = {
+                "slot_idx": int(self.slot_var.get()) - 1,
+                "wor": wor,
+                "wot": wot,
+                "wop": wop,
+                "fmin": fmin,
+                "trim_pos_im": self.trim_pos_im.get(),
+            }
             return True
-        except Exception:
+        except Exception as e:
+            messagebox.showerror("Paramètres invalides", f"Valeurs incorrectes.\n\nDétail :\n{e}")
             return False
 
-    has_header = not (len(first) >= 3 and all(is_num(x) for x in first[:3]))
-
-    df = pd.read_csv(
-        path,
-        sep=r"\s+",
-        header=0 if has_header else None,
-        names=["freq", "R", "Im"] if not has_header else None,
-        dtype=str,
-        engine="python",
-    )
-
-    df = df.iloc[:, :3].copy()
-    df.columns = ["freq", "R", "Im"]
-
-    for c in ["freq", "R", "Im"]:
-        df[c] = df[c].astype(str).str.replace(",", ".", regex=False)
-        df[c] = pd.to_numeric(df[c], errors="coerce")
-
-    df = df.dropna(subset=["freq", "R", "Im"]).reset_index(drop=True)
-    return df
 
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
+        self.build_menus()
         self.title("Comparaison Nyquist (jusqu'à 3 machines)")
         self.geometry("980x650")
         self.minsize(880, 560)
@@ -291,6 +168,26 @@ class App(tk.Tk):
         # Markers différents (sans imposer de couleurs)
         self.markers = ["o", "s", "^"]
 
+    def build_menus(self):
+        menubar = tk.Menu(self)
+
+        menu_file = tk.Menu(menubar, tearoff=0)
+        menu_file.add_command(label="Ouvrir fichier 1...", command=lambda: self.choose_file(0))
+        menu_file.add_command(label="Ouvrir fichier 2...", command=lambda: self.choose_file(1))
+        menu_file.add_command(label="Ouvrir fichier 3...", command=lambda: self.choose_file(2))
+        menu_file.add_separator()
+        menu_file.add_command(label="Exporter PNG...", command=self.export_png)
+        menu_file.add_separator()
+        menu_file.add_command(label="Quitter", command=self.destroy)
+
+        menu_tools = tk.Menu(menubar, tearoff=0)
+        menu_tools.add_command(label="Supprimer diffusion Warburg (Wo)...", command=self.run_warburg_tool)
+
+        menubar.add_cascade(label="Fichier", menu=menu_file)
+        menubar.add_cascade(label="Tools", menu=menu_tools)
+
+        self.config(menu=menubar)
+
     def choose_file(self, idx: int):
         path = filedialog.askopenfilename(
             title=f"Sélectionner le fichier {idx+1}",
@@ -348,9 +245,9 @@ class App(tk.Tk):
     def clear_plot(self):
         self.ax.clear()
         use_neg = self.neg_im.get()
-        self.ax.set_title("Nyquist (scatter) : Re vs " + ("Im" if use_neg else "-Im"))
-        self.ax.set_xlabel("Re (R)")
-        self.ax.set_ylabel("-Im" if use_neg else "Im")
+        self.ax.set_title("Nyquist (scatter) : Re vs " + ("-Im" if use_neg else "Im"))
+        self.ax.set_xlabel("Re(Z) [Ohm]")
+        self.ax.set_ylabel("-Im(Z) [Ohm]" if use_neg else "Im(Z) [Ohm]")
         self.ax.grid(True)
         self.canvas.draw()
 
@@ -367,14 +264,14 @@ class App(tk.Tk):
                 continue
 
             y = -df["Im"] if use_neg else df["Im"]
-            label = slot["label"].get().strip() or f"Machine {i+1}"
+            label = slot["label"].get().strip() or f"Machine {i + 1}"
 
             self.ax.scatter(df["R"], y, s=14, marker=self.markers[i], label=label)
             plotted += 1
 
-        self.ax.set_title("Nyquist (scatter) : Re vs " + ("Im" if use_neg else "-Im"))
-        self.ax.set_xlabel("Re (R)")
-        self.ax.set_ylabel("-Im" if use_neg else "Im")
+        self.ax.set_title("Nyquist (scatter) : Re vs " + ("-Im" if use_neg else "Im"))
+        self.ax.set_xlabel("Re(Z) [Ohm]")
+        self.ax.set_ylabel("-Im(Z) [Ohm]" if use_neg else "Im(Z) [Ohm]")
         self.ax.grid(True)
 
         if plotted > 0:
@@ -410,6 +307,64 @@ class App(tk.Tk):
         except Exception as e:
             messagebox.showerror("Erreur export", f"Impossible d'exporter en PNG.\n\nDétail:\n{e}")
 
+    def run_warburg_tool(self):
+        available = [
+            i + 1
+            for i, slot in enumerate(self.slots)
+            if slot["df"] is not None and not slot["df"].empty
+        ]
+
+        if not available:
+            messagebox.showwarning(
+                "Aucune donnée",
+                "Charge d'abord au moins un fichier valide avant d'utiliser l'outil Warburg."
+            )
+            return
+
+        dlg = WarburgDialog(self, available)
+        params = dlg.result
+        if not params:
+            return
+
+        idx = params["slot_idx"]
+        slot = self.slots[idx]
+
+        if slot["df"] is None or slot["df"].empty:
+            messagebox.showwarning("Slot vide", f"Le slot {idx + 1} ne contient aucune donnée.")
+            return
+
+        try:
+            df_corr = remove_warburg_wo(
+                slot["df"],
+                wor=params["wor"],
+                wot=params["wot"],
+                wop=params["wop"],
+                fmin=params["fmin"],
+                trim_pos_im=params["trim_pos_im"],
+            )
+
+            if df_corr.empty:
+                messagebox.showwarning(
+                    "Résultat vide",
+                    "La correction a produit un tableau vide. Vérifie les paramètres et filtres."
+                )
+                return
+
+            # On garde seulement les colonnes normalisées pour l'affichage
+            slot["df"] = df_corr[["freq", "R", "Im"]].copy()
+
+            old_label = slot["label"].get().strip() or f"Machine {idx + 1}"
+            if "noWo" not in old_label:
+                slot["label"].set(old_label + " | noWo")
+
+            self.draw_overlay()
+            self.status.set(
+                f"Suppression Wo appliquée au fichier {idx + 1} "
+                f"(Wo-R={params['wor']}, Wo-T={params['wot']}, Wo-P={params['wop']})."
+            )
+
+        except Exception as e:
+            messagebox.showerror("Erreur correction Warburg", f"Impossible d'appliquer la correction.\n\nDétail:\n{e}")
 
 if __name__ == "__main__":
     App().mainloop()

@@ -81,7 +81,7 @@ def load_eis_3cols(path: Path, freq_col: str | None, re_col: str | None, im_col:
     for i, line in enumerate(text[:400]):
         if re.search(r'\bfreq', line, re.IGNORECASE):
             # likely the column header row
-            if ('Re' in line or 'Im' in line or 'Z' in line):
+            if 'Re' in line or 'Im' in line or 'Z' in line:
                 header_idx = i
                 header_line = line
                 break
