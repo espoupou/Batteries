@@ -12,6 +12,13 @@ import pandas as pd
 
 
 # =========================
+# Global eis core variables
+# =========================
+
+EXCEL_FILE_EXTENSIONS = {".xlsx", ".xlsm", ".xltx", ".xltm", ".xls"}
+
+
+# =========================
 # Helpers
 # =========================
 
@@ -76,7 +83,7 @@ def preprocess_eclab_text_file(
                         f"{input_path.name} | ligne {line_num} a une 1re colonne non numérique: {parts[0]!r}"
                     ) from e
 
-                if math.isclose(first_val, stop_first_col, rel_tol=0.0, abs_tol=1e-12):
+                if math.isclose(first_val, stop_first_col, rel_tol=0.0, abs_tol=1e-12) or (first_val <= stop_first_col):
                     break
 
             if negate_col3:
@@ -140,6 +147,174 @@ def preprocess_eclab_text_to_dataframe(
             out_path.unlink(missing_ok=True)
         except Exception:
             pass
+
+
+def _truncate_normalized_df_at_stop(df: pd.DataFrame, stop_first_col: float | None) -> pd.DataFrame:
+    """
+    Tronque un DataFrame normalisé (freq, R, Im) quand la première colonne
+    atteint ou franchit la valeur demandée, en conservant la ligne seuil.
+    """
+    if stop_first_col is None or df.empty:
+        return df.reset_index(drop=True).copy()
+
+    freq_values = pd.to_numeric(df["freq"], errors="coerce")
+    if freq_values.isna().all():
+        return df.reset_index(drop=True).copy()
+
+    keep_until = len(df)
+    prev_val = None
+    scan_direction = 0  # +1 ascending, -1 descending
+
+    for idx, current in enumerate(freq_values.to_numpy(dtype=float)):
+        if prev_val is not None and scan_direction == 0 and not math.isclose(current, prev_val, rel_tol=0.0, abs_tol=1e-18):
+            scan_direction = +1 if current > prev_val else -1
+
+        reached = math.isclose(current, stop_first_col, rel_tol=0.0, abs_tol=1e-12)
+        if scan_direction == -1:
+            reached = reached or (current <= stop_first_col)
+        elif scan_direction == +1:
+            reached = reached or (current >= stop_first_col)
+
+        if reached:
+            keep_until = idx + 1
+            break
+
+        prev_val = current
+
+    return df.iloc[:keep_until].copy().reset_index(drop=True)
+
+
+def is_excel_file(path: str | Path) -> bool:
+    return Path(path).suffix.lower() in EXCEL_FILE_EXTENSIONS
+
+
+def preprocess_eis_dataframe(
+    table_df: pd.DataFrame,
+    *,
+    keep_n_cols: int = 3,
+    negate_col3: bool = False,
+    stop_first_col: float | None = None,
+) -> pd.DataFrame:
+    """
+    Normalise une table EIS (par exemple une feuille Excel) vers les colonnes:
+        freq, R, Im
+
+    Si des headers compatibles sont présents, ils sont détectés.
+    Sinon, on utilise les 3 premières colonnes numériques exploitables.
+    """
+    if table_df is None:
+        raise ValueError("Aucune table fournie.")
+
+    work = table_df.copy()
+    work = work.dropna(axis=0, how="all")
+    work = work.dropna(axis=1, how="all")
+
+    if work.empty:
+        raise ValueError("La table est vide.")
+
+    selected = {}
+    im_sign = +1
+
+    for col in work.columns:
+        role, sign = _classify_header(col)
+        if role and role not in selected:
+            selected[role] = col
+            if role == "Im":
+                im_sign = sign if sign is not None else +1
+
+    if {"freq", "R", "Im"}.issubset(selected):
+        out = work[[selected["freq"], selected["R"], selected["Im"]]].copy()
+        out.columns = ["freq", "R", "Im"]
+    else:
+        n_cols = max(int(keep_n_cols), 3)
+        if work.shape[1] < 3:
+            raise ValueError("La feuille ne contient pas au moins 3 colonnes exploitables.")
+        out = work.iloc[:, :n_cols].copy().iloc[:, :3]
+        out.columns = ["freq", "R", "Im"]
+
+    for c in ["freq", "R", "Im"]:
+        out[c] = out[c].astype(str).str.replace(",", ".", regex=False)
+        out[c] = pd.to_numeric(out[c], errors="coerce")
+
+    out = out.dropna(subset=["freq", "R", "Im"]).reset_index(drop=True)
+
+    if {"freq", "R", "Im"}.issubset(selected) and im_sign == -1:
+        out["Im"] = -out["Im"]
+
+    if negate_col3:
+        out["Im"] = -out["Im"]
+
+    out = _truncate_normalized_df_at_stop(out, stop_first_col)
+    return out.reset_index(drop=True)
+
+
+def read_eis_excel_workbook(input_path: str | Path) -> dict[str, pd.DataFrame]:
+    """
+    Charge toutes les feuilles d'un classeur Excel EIS dans l'ordre du workbook.
+    Les tables sont gardées telles quelles pour permettre la navigation feuille par feuille.
+    """
+    input_path = Path(input_path)
+    if not is_excel_file(input_path):
+        raise ValueError(f"Le fichier n'est pas un classeur Excel supporté: {input_path}")
+
+    engine = "openpyxl" if input_path.suffix.lower() in {".xlsx", ".xlsm", ".xltx", ".xltm"} else None
+    sheets = pd.read_excel(input_path, sheet_name=None, dtype=str, engine=engine)
+
+    cleaned = {}
+    for sheet_name, df in sheets.items():
+        if df is None:
+            continue
+        block = df.dropna(axis=0, how="all").dropna(axis=1, how="all")
+        if block.empty:
+            continue
+        cleaned[str(sheet_name)] = block.reset_index(drop=True)
+
+    if not cleaned:
+        raise ValueError("Aucune feuille exploitable trouvée dans le classeur Excel.")
+
+    return cleaned
+
+
+def export_processed_eis_workbook(
+    processed_sheets: dict[str, pd.DataFrame],
+    out_path: str | Path,
+) -> Path:
+    """
+    Exporte plusieurs jeux EIS traités dans un seul classeur Excel.
+    Les noms de feuilles d'origine sont conservés autant que possible.
+    """
+    if not processed_sheets:
+        raise ValueError("Aucune feuille traitée à exporter.")
+
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    used_names = set()
+    summary_rows = []
+
+    with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
+        for original_name, df in processed_sheets.items():
+            sheet_name = make_unique_sheet_name(str(original_name), used_names)
+            used_names.add(sheet_name)
+
+            out_df = df[["freq", "R", "Im"]].copy()
+            out_df.columns = ["freq_Hz", "Zprime_Ohm", "Zdoubleprime_Ohm"]
+            out_df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+            summary_row = {
+                "source_sheet": str(original_name),
+                "export_sheet": sheet_name,
+                "n_points": int(len(df)),
+            }
+            if not df.empty:
+                summary_row["f_start_Hz"] = float(df["freq"].iloc[0])
+                summary_row["f_end_Hz"] = float(df["freq"].iloc[-1])
+            summary_rows.append(summary_row)
+
+        summary_name = make_unique_sheet_name("Summary", used_names)
+        pd.DataFrame(summary_rows).to_excel(writer, sheet_name=summary_name, index=False)
+
+    return out_path
 
 
 # =========================
