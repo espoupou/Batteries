@@ -317,6 +317,108 @@ def export_processed_eis_workbook(
     return out_path
 
 
+def _processed_df_to_export_df(df: pd.DataFrame) -> pd.DataFrame:
+    out = df[["freq", "R", "Im"]].copy()
+    out.columns = ["freq_Hz", "Zprime_Ohm", "Zdoubleprime_Ohm"]
+    return out
+
+
+def _write_df_to_openpyxl_sheet(ws, df: pd.DataFrame):
+    export_df = _processed_df_to_export_df(df)
+
+    ws.cell(row=1, column=1, value="freq_Hz")
+    ws.cell(row=1, column=2, value="Zprime_Ohm")
+    ws.cell(row=1, column=3, value="Zdoubleprime_Ohm")
+
+    for i, row in enumerate(export_df.itertuples(index=False, name=None), start=2):
+        ws.cell(row=i, column=1, value=row[0])
+        ws.cell(row=i, column=2, value=row[1])
+        ws.cell(row=i, column=3, value=row[2])
+
+
+def export_processed_sheets_over_original_workbook(
+    source_workbook_path: str | Path,
+    processed_sheets: dict[str, pd.DataFrame],
+    out_path: str | Path,
+    metadata_rows: list[dict] | None = None,
+) -> Path:
+    """
+    Repart du workbook source et remplace uniquement les feuilles
+    présentes dans processed_sheets.
+    Toutes les autres feuilles restent intactes.
+    """
+    source_workbook_path = Path(source_workbook_path)
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    suffix = source_workbook_path.suffix.lower()
+
+    # Cas openpyxl : on garde les feuilles intactes telles quelles
+    if suffix in {".xlsx", ".xlsm", ".xltx", ".xltm"}:
+        keep_vba = suffix == ".xlsm"
+        wb = load_workbook(source_workbook_path, data_only=False, keep_vba=keep_vba)
+
+        # injecter / remplacer uniquement les feuilles mises à jour
+        for sheet_name, df in processed_sheets.items():
+            if sheet_name in wb.sheetnames:
+                idx = wb.sheetnames.index(sheet_name)
+                old_ws = wb[sheet_name]
+                wb.remove(old_ws)
+                new_ws = wb.create_sheet(title=sheet_name, index=idx)
+            else:
+                new_name = make_unique_sheet_name(str(sheet_name), set(wb.sheetnames))
+                new_ws = wb.create_sheet(title=new_name)
+
+            _write_df_to_openpyxl_sheet(new_ws, df)
+
+        # feuille metadata/cache
+        if metadata_rows is not None:
+            meta_name = "__EIS_CACHE__"
+            if meta_name in wb.sheetnames:
+                wb.remove(wb[meta_name])
+
+            meta_ws = wb.create_sheet(title=make_unique_sheet_name(meta_name, set(wb.sheetnames)))
+            meta_df = pd.DataFrame(metadata_rows)
+
+            if meta_df.empty:
+                meta_df = pd.DataFrame([{"info": "No cached processed sheets"}])
+
+            for j, col in enumerate(meta_df.columns, start=1):
+                meta_ws.cell(row=1, column=j, value=col)
+
+            for i, row in enumerate(meta_df.itertuples(index=False, name=None), start=2):
+                for j, value in enumerate(row, start=1):
+                    meta_ws.cell(row=i, column=j, value=value)
+
+        wb.save(out_path)
+        return out_path
+
+    # Fallback .xls : on réécrit en .xlsx avec pandas
+    all_sheets = pd.read_excel(source_workbook_path, sheet_name=None, dtype=str)
+
+    with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
+        used_names = set()
+
+        for original_name, original_df in all_sheets.items():
+            safe_name = make_unique_sheet_name(str(original_name), used_names)
+            used_names.add(safe_name)
+
+            if original_name in processed_sheets:
+                export_df = _processed_df_to_export_df(processed_sheets[original_name])
+                export_df.to_excel(writer, sheet_name=safe_name, index=False)
+            else:
+                original_df.to_excel(writer, sheet_name=safe_name, index=False)
+
+        if metadata_rows is not None:
+            meta_name = make_unique_sheet_name("__EIS_CACHE__", used_names)
+            meta_df = pd.DataFrame(metadata_rows)
+            if meta_df.empty:
+                meta_df = pd.DataFrame([{"info": "No cached processed sheets"}])
+            meta_df.to_excel(writer, sheet_name=meta_name, index=False)
+
+    return out_path
+
+
 # =========================
 # Lecture EIS
 # =========================

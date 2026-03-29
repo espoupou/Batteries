@@ -1,6 +1,7 @@
 
-from pathlib import Path
 import tkinter as tk
+from pathlib import Path
+from datetime import datetime
 from tkinter import filedialog, messagebox
 
 import matplotlib
@@ -12,6 +13,7 @@ from eis_core import (
     preprocess_eclab_text_file,
     preprocess_eclab_text_to_dataframe,
     remove_warburg_wo, is_excel_file, read_eis_excel_workbook, preprocess_eis_dataframe, export_processed_eis_workbook,
+    export_processed_sheets_over_original_workbook,
 )
 
 
@@ -53,6 +55,10 @@ class EISPreprocessingWindow(tk.Toplevel):
         self.current_sheet_index = 0
         self.current_sheet_name = None
         self.sheet_nav_var = tk.StringVar(value="Text / single file")
+
+        self.sheet_cache = {}  # sheet_name -> {"raw_df", "proc_df", "params", "updated_at"}
+        self.sheet_saved_params = {}
+        self.cache_workbook_path = None
 
         self._build_ui()
         self._update_sheet_nav_state()
@@ -97,66 +103,87 @@ class EISPreprocessingWindow(tk.Toplevel):
         # conversion simple
         block1 = tk.LabelFrame(left, text="Text preprocessing")
         block1.grid(row=4, column=0, columnspan=3, sticky="we", padx=8, pady=6)
+        block1.columnconfigure(0, weight=0)
+        block1.columnconfigure(1, weight=0)
+        block1.columnconfigure(2, weight=0)
 
         tk.Checkbutton(block1, text="Skip first line", variable=self.skip_first_line).grid(
             row=0, column=0, sticky="w", padx=8, pady=4
         )
         tk.Checkbutton(block1, text="Replace comma by dot", variable=self.replace_comma).grid(
-            row=1, column=0, sticky="w", padx=8, pady=4
-        )
-        tk.Checkbutton(block1, text="Negate 3rd column", variable=self.negate_col3).grid(
-            row=2, column=0, sticky="w", padx=8, pady=4
+            row=0, column=1, columnspan=2, sticky="w", padx=8, pady=4
         )
 
-        tk.Label(block1, text="Keep first N columns").grid(row=3, column=0, sticky="w", padx=8, pady=(6, 2))
-        tk.Entry(block1, textvariable=self.keep_n_cols, width=10).grid(row=3, column=1, sticky="w", padx=8, pady=(6, 2))
+        tk.Checkbutton(block1, text="Negate 3rd column", variable=self.negate_col3).grid(
+            row=1, column=0, sticky="w", padx=8, pady=4
+        )
+        tk.Label(block1, text="Keep first N columns").grid(
+            row=1, column=1, sticky="w", padx=(16, 8), pady=4
+        )
+        tk.Entry(block1, textvariable=self.keep_n_cols, width=8).grid(
+            row=1, column=2, sticky="w", padx=8, pady=4
+        )
 
         tk.Checkbutton(
             block1,
-            text="Stop when first column reaches",
+            text="Min freq",
             variable=self.use_stop_first_col
-        ).grid(row=4, column=0, sticky="w", padx=8, pady=(8, 4))
+        ).grid(row=2, column=0, columnspan=2, sticky="w", padx=8, pady=(8, 4))
         tk.Entry(block1, textvariable=self.stop_first_col, width=12).grid(
-            row=4, column=1, sticky="w", padx=8, pady=(8, 4)
+            row=2, column=2, sticky="w", padx=8, pady=(8, 4)
         )
 
         # Wo remove
         block2 = tk.LabelFrame(left, text="Wo diffusion removal")
         block2.grid(row=5, column=0, columnspan=3, sticky="we", padx=8, pady=6)
+        block2.columnconfigure(0, weight=0)
+        block2.columnconfigure(1, weight=0)
+        block2.columnconfigure(2, weight=0)
+        block2.columnconfigure(3, weight=0)
 
         tk.Checkbutton(block2, text="Apply Wo removal", variable=self.apply_wo).grid(
-            row=0, column=0, columnspan=2, sticky="w", padx=8, pady=4
+            row=0, column=0, columnspan=4, sticky="w", padx=8, pady=4
         )
 
         tk.Label(block2, text="Wo-R").grid(row=1, column=0, sticky="w", padx=8, pady=4)
-        tk.Entry(block2, textvariable=self.wor, width=12).grid(row=1, column=1, sticky="w", padx=8, pady=4)
+        tk.Entry(block2, textvariable=self.wor, width=10).grid(row=1, column=1, sticky="w", padx=8, pady=4)
 
-        tk.Label(block2, text="Wo-T").grid(row=2, column=0, sticky="w", padx=8, pady=4)
-        tk.Entry(block2, textvariable=self.wot, width=12).grid(row=2, column=1, sticky="w", padx=8, pady=4)
+        tk.Label(block2, text="Wo-T").grid(row=1, column=2, sticky="w", padx=(16, 8), pady=4)
+        tk.Entry(block2, textvariable=self.wot, width=10).grid(row=1, column=3, sticky="w", padx=8, pady=4)
 
-        tk.Label(block2, text="Wo-P").grid(row=3, column=0, sticky="w", padx=8, pady=4)
-        tk.Entry(block2, textvariable=self.wop, width=12).grid(row=3, column=1, sticky="w", padx=8, pady=4)
+        tk.Label(block2, text="Wo-P").grid(row=2, column=0, sticky="w", padx=8, pady=4)
+        tk.Entry(block2, textvariable=self.wop, width=10).grid(row=2, column=1, sticky="w", padx=8, pady=4)
 
         tk.Checkbutton(block2, text="Use minimum frequency", variable=self.use_fmin).grid(
-            row=4, column=0, sticky="w", padx=8, pady=(8, 4)
+            row=3, column=0, columnspan=2, sticky="w", padx=8, pady=(8, 4)
         )
-        tk.Entry(block2, textvariable=self.fmin, width=12).grid(
-            row=4, column=1, sticky="w", padx=8, pady=(8, 4)
+        tk.Entry(block2, textvariable=self.fmin, width=10).grid(
+            row=3, column=2, sticky="w", padx=8, pady=(8, 4)
         )
 
         tk.Checkbutton(block2, text="Drop corrected points with Im > 0", variable=self.trim_pos_im).grid(
-            row=5, column=0, columnspan=2, sticky="w", padx=8, pady=4
+            row=4, column=0, columnspan=4, sticky="w", padx=8, pady=4
         )
 
         # actions
         block3 = tk.LabelFrame(left, text="Actions")
         block3.grid(row=6, column=0, columnspan=3, sticky="we", padx=8, pady=6)
+        block3.columnconfigure(0, weight=1)
+        block3.columnconfigure(1, weight=1)
 
-        tk.Button(block3, text="Preview", command=self.preview_processing).pack(fill="x", padx=8, pady=(8, 4))
-        tk.Button(block3, text="Export processed file...", command=self.export_processed_file).pack(
-            fill="x", padx=8, pady=4
+        tk.Button(block3, text="Preview", command=self.preview_processing).grid(
+            row=0, column=0, sticky="we", padx=(8, 4), pady=(8, 4)
         )
-        tk.Button(block3, text="Close", command=self.destroy).pack(fill="x", padx=8, pady=(4, 8))
+        tk.Button(block3, text="Update current sheet", command=self.update_current_sheet_cache).grid(
+            row=0, column=1, sticky="we", padx=(4, 8), pady=(8, 4)
+        )
+
+        tk.Button(block3, text="Export processed file...", command=self.export_processed_file).grid(
+            row=1, column=0, columnspan=2, sticky="we", padx=8, pady=4
+        )
+        tk.Button(block3, text="Close", command=self.destroy).grid(
+            row=2, column=0, columnspan=2, sticky="we", padx=8, pady=(4, 8)
+        )
 
         # infos
         block4 = tk.LabelFrame(left, text="Info")
@@ -240,15 +267,22 @@ class EISPreprocessingWindow(tk.Toplevel):
         self.raw_df = None
         self.proc_df = None
 
+        self.sheet_cache = {}
+        self.sheet_saved_params = {}
+        self.cache_workbook_path = None
+
         try:
             if self._is_excel_input(path):
                 self._load_excel_workbook(path)
                 suggested = f"{Path(path).stem}_PROCESSED.xlsx"
                 self.output_path.set(str(Path(path).with_name(suggested)))
+                self.cache_workbook_path = str(Path(path).with_name(f"{Path(path).stem}__PREPROCESS_CACHE.xlsx"))
+                self._on_sheet_changed()
                 self._write_info(
                     f"Loaded Excel workbook:\n{path}\n\n"
                     f"Sheets detected: {len(self.sheet_names)}\n"
-                    f"Current sheet: {self.current_sheet_name or '-'}"
+                    f"Current sheet: {self.current_sheet_name or '-'}\n"
+                    f"Cache file: {self.cache_workbook_path}"
                 )
             else:
                 self._clear_excel_workbook_state()
@@ -256,13 +290,12 @@ class EISPreprocessingWindow(tk.Toplevel):
                 self.output_path.set(str(Path(path).with_name(suggested)))
                 self._write_info(f"Loaded input file:\n{path}")
 
+            self._update_sheet_nav_state()
+
         except Exception as e:
             self._clear_excel_workbook_state()
             self.input_path.set("")
             messagebox.showerror("Load error", f"{e}", parent=self)
-            return
-
-        self._update_sheet_nav_state()
 
     def _is_excel_input(self, path=None):
         candidate = path if path is not None else self.input_path.get().strip()
@@ -304,14 +337,14 @@ class EISPreprocessingWindow(tk.Toplevel):
         if not self.sheet_names:
             return
         self.current_sheet_index = (self.current_sheet_index - 1) % len(self.sheet_names)
-        self._update_sheet_nav_state()
+        self._on_sheet_changed()
         self.preview_processing()
 
     def go_to_next_sheet(self):
         if not self.sheet_names:
             return
         self.current_sheet_index = (self.current_sheet_index + 1) % len(self.sheet_names)
-        self._update_sheet_nav_state()
+        self._on_sheet_changed()
         self.preview_processing()
 
     def _get_stop_first_col_value(self):
@@ -478,17 +511,79 @@ class EISPreprocessingWindow(tk.Toplevel):
             return
 
         try:
-            stop_first_col = self._get_stop_first_col_value()
-
+            # mode Excel = export à partir du cache uniquement
             if self._is_excel_input(path):
-                out_path = self._export_excel_workbook(path, stop_first_col)
-            else:
-                out_path = self._export_text_file(path, stop_first_col)
+                if not self.sheet_cache:
+                    messagebox.showwarning(
+                        "Nothing to export",
+                        "No processed sheet has been cached yet.\nUse 'Update current sheet' first.",
+                        parent=self,
+                    )
+                    return
 
-            if not out_path:
+                default_name = f"{Path(path).stem}_PROCESSED.xlsx"
+                save_path = filedialog.asksaveasfilename(
+                    parent=self,
+                    title="Export processed Excel workbook",
+                    defaultextension=".xlsx",
+                    initialfile=default_name,
+                    filetypes=[
+                        ("Excel workbook", "*.xlsx"),
+                        ("All files", "*.*"),
+                    ],
+                )
+                if not save_path:
+                    return
+
+                processed_sheets = {
+                    sheet_name: entry["proc_df"]
+                    for sheet_name, entry in self.sheet_cache.items()
+                    if entry.get("proc_df") is not None
+                }
+
+                out_path = export_processed_sheets_over_original_workbook(
+                    source_workbook_path=path,
+                    processed_sheets=processed_sheets,
+                    out_path=save_path,
+                    metadata_rows=self._build_cache_metadata_rows(),
+                )
+
+                self._write_info(
+                    f"Processed workbook exported:\n{out_path}\n\n"
+                    f"Updated sheets exported: {len(processed_sheets)}\n"
+                    f"Unprocessed sheets kept intact from original workbook."
+                )
+                messagebox.showinfo("Export done", f"File created:\n{out_path}", parent=self)
                 return
 
-            self._write_info(f"Processed export created:\n{out_path}")
+            # mode texte = comportement normal
+            stop_first_col = self._get_stop_first_col_value()
+
+            default_name = f"{Path(path).stem}_OUTPUT{Path(path).suffix}"
+            save_path = filedialog.asksaveasfilename(
+                parent=self,
+                title="Export processed text file",
+                defaultextension=Path(path).suffix or ".txt",
+                initialfile=default_name,
+                filetypes=[
+                    ("Text files", "*.txt *.dat *.csv *.tsv"),
+                    ("All files", "*.*"),
+                ],
+            )
+            if not save_path:
+                return
+
+            out_path = preprocess_eclab_text_file(
+                input_path=path,
+                output_path=save_path,
+                skip_first_line=self.skip_first_line.get(),
+                replace_comma=self.replace_comma.get(),
+                keep_n_cols=self.keep_n_cols.get(),
+                negate_col3=self.negate_col3.get(),
+                stop_first_col=stop_first_col,
+            )
+
+            self._write_info(f"Processed file exported:\n{out_path}")
             messagebox.showinfo("Export done", f"File created:\n{out_path}", parent=self)
 
         except Exception as e:
@@ -553,8 +648,13 @@ class EISPreprocessingWindow(tk.Toplevel):
 
         if self.sheet_names:
             self.info_text.insert(tk.END, "Workbook mode\n")
-            self.info_text.insert(tk.END, f"Sheets: {len(self.sheet_names)}\n")
-            self.info_text.insert(tk.END, f"Current sheet: {self.current_sheet_name}\n\n")
+            self.info_text.insert(tk.END, f"Sheets in workbook: {len(self.sheet_names)}\n")
+            self.info_text.insert(tk.END, f"Current sheet: {self.current_sheet_name}\n")
+            self.info_text.insert(tk.END, f"Cached processed sheets: {len(self.sheet_cache)}\n")
+            self.info_text.insert(tk.END, f"Current sheet cached: {self.current_sheet_name in self.sheet_cache}\n")
+            if self.cache_workbook_path:
+                self.info_text.insert(tk.END, f"Cache file: {self.cache_workbook_path}\n")
+            self.info_text.insert(tk.END, "\n\n")
 
         if self.raw_df is not None and not self.raw_df.empty:
             self.info_text.insert(tk.END, "Raw data\n")
@@ -594,3 +694,154 @@ class EISPreprocessingWindow(tk.Toplevel):
     def _write_info(self, text):
         self.info_text.delete("1.0", tk.END)
         self.info_text.insert(tk.END, text)
+
+    def _collect_current_params(self):
+        return {
+            "skip_first_line": self.skip_first_line.get(),
+            "replace_comma": self.replace_comma.get(),
+            "keep_n_cols": self.keep_n_cols.get(),
+            "negate_col3": self.negate_col3.get(),
+            "use_stop_first_col": self.use_stop_first_col.get(),
+            "stop_first_col": self.stop_first_col.get(),
+            "apply_wo": self.apply_wo.get(),
+            "wor": self.wor.get(),
+            "wot": self.wot.get(),
+            "wop": self.wop.get(),
+            "use_fmin": self.use_fmin.get(),
+            "fmin": self.fmin.get(),
+            "trim_pos_im": self.trim_pos_im.get(),
+        }
+
+    def _apply_params_to_ui(self, params: dict):
+        self.skip_first_line.set(params.get("skip_first_line", True))
+        self.replace_comma.set(params.get("replace_comma", True))
+        self.keep_n_cols.set(params.get("keep_n_cols", 3))
+        self.negate_col3.set(params.get("negate_col3", False))
+        self.use_stop_first_col.set(params.get("use_stop_first_col", False))
+        self.stop_first_col.set(params.get("stop_first_col", ""))
+        self.apply_wo.set(params.get("apply_wo", False))
+        self.wor.set(params.get("wor", ""))
+        self.wot.set(params.get("wot", ""))
+        self.wop.set(params.get("wop", ""))
+        self.use_fmin.set(params.get("use_fmin", False))
+        self.fmin.set(params.get("fmin", ""))
+        self.trim_pos_im.set(params.get("trim_pos_im", False))
+
+    def _restore_params_for_current_sheet(self):
+        if not self.current_sheet_name:
+            return
+        params = self.sheet_saved_params.get(self.current_sheet_name)
+        if params:
+            self._apply_params_to_ui(params)
+
+    def _load_cached_view_for_current_sheet(self):
+        if not self.current_sheet_name:
+            self.raw_df = None
+            self.proc_df = None
+            self._draw_plots()
+            self._update_info_panel()
+            return
+
+        entry = self.sheet_cache.get(self.current_sheet_name)
+        if entry is None:
+            self.raw_df = None
+            self.proc_df = None
+            self._draw_plots()
+            self._update_info_panel()
+            return
+
+        self.raw_df = entry["raw_df"].copy()
+        self.proc_df = entry["proc_df"].copy()
+        self._draw_plots()
+        self._update_info_panel()
+
+    def _on_sheet_changed(self):
+        self._update_sheet_nav_state()
+        self._restore_params_for_current_sheet()
+        self._load_cached_view_for_current_sheet()
+
+    def _build_cache_metadata_rows(self):
+        rows = []
+        for sheet_name, entry in self.sheet_cache.items():
+            params = entry.get("params", {})
+            proc_df = entry.get("proc_df")
+            rows.append({
+                "source_sheet": sheet_name,
+                "updated_at": entry.get("updated_at", ""),
+                "n_points": int(len(proc_df)) if proc_df is not None else 0,
+                "keep_n_cols": params.get("keep_n_cols"),
+                "negate_col3": params.get("negate_col3"),
+                "use_stop_first_col": params.get("use_stop_first_col"),
+                "stop_first_col": params.get("stop_first_col"),
+                "apply_wo": params.get("apply_wo"),
+                "wor": params.get("wor"),
+                "wot": params.get("wot"),
+                "wop": params.get("wop"),
+                "use_fmin": params.get("use_fmin"),
+                "fmin": params.get("fmin"),
+                "trim_pos_im": params.get("trim_pos_im"),
+            })
+        return rows
+
+    def _write_cache_workbook(self):
+        if not self._is_excel_input():
+            return
+        if not self.cache_workbook_path:
+            return
+
+        processed_sheets = {
+            sheet_name: entry["proc_df"]
+            for sheet_name, entry in self.sheet_cache.items()
+            if entry.get("proc_df") is not None
+        }
+
+        export_processed_sheets_over_original_workbook(
+            source_workbook_path=self.input_path.get().strip(),
+            processed_sheets=processed_sheets,
+            out_path=self.cache_workbook_path,
+            metadata_rows=self._build_cache_metadata_rows(),
+        )
+
+    def update_current_sheet_cache(self):
+        path = self.input_path.get().strip()
+        if not path:
+            messagebox.showwarning("No file", "Choose an input file first.", parent=self)
+            return
+
+        if not self._is_excel_input(path):
+            messagebox.showinfo(
+                "Text mode",
+                "The cache/update workflow is only used for Excel workbooks.\nUse Preview or Export directly for text files.",
+                parent=self,
+            )
+            return
+
+        try:
+            stop_first_col = self._get_stop_first_col_value()
+            sheet_name, raw_df, proc_df = self._preview_excel_input(stop_first_col)
+
+            params = self._collect_current_params()
+
+            self.sheet_saved_params[sheet_name] = params.copy()
+            self.sheet_cache[sheet_name] = {
+                "raw_df": raw_df.copy(),
+                "proc_df": proc_df.copy(),
+                "params": params.copy(),
+                "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+
+            self.raw_df = raw_df
+            self.proc_df = proc_df
+
+            self._write_cache_workbook()
+            self._draw_plots()
+            self._update_info_panel()
+
+            messagebox.showinfo(
+                "Sheet updated",
+                f"Current sheet cached successfully:\n{sheet_name}\n\nCache file:\n{self.cache_workbook_path}",
+                parent=self,
+            )
+
+        except Exception as e:
+            messagebox.showerror("Update error", f"{e}", parent=self)
