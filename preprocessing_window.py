@@ -12,8 +12,12 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 from eis_core import (
     preprocess_eclab_text_file,
     preprocess_eclab_text_to_dataframe,
-    remove_warburg_wo, is_excel_file, read_eis_excel_workbook, preprocess_eis_dataframe, export_processed_eis_workbook,
+    remove_warburg_wo,
+    is_excel_file,
+    read_eis_excel_workbook,
     export_processed_sheets_over_original_workbook,
+    prepare_eis_excel_sheet_for_export,
+    build_processed_export_sheet,
 )
 
 
@@ -413,13 +417,16 @@ class EISPreprocessingWindow(tk.Toplevel):
 
         sheet_name = self.sheet_names[self.current_sheet_index]
         sheet_df = self.excel_sheets[sheet_name]
-        raw_df = preprocess_eis_dataframe(
+
+        raw_df, export_df, export_meta = prepare_eis_excel_sheet_for_export(
             sheet_df,
             keep_n_cols=self.keep_n_cols.get(),
             negate_col3=self.negate_col3.get(),
             stop_first_col=stop_first_col,
         )
-        return sheet_name, *self._apply_processing_pipeline(raw_df)
+
+        raw_df, proc_df = self._apply_processing_pipeline(raw_df)
+        return sheet_name, raw_df, proc_df, export_df, export_meta
 
     def preview_processing(self):
         path = self.input_path.get().strip()
@@ -431,7 +438,7 @@ class EISPreprocessingWindow(tk.Toplevel):
             stop_first_col = self._get_stop_first_col_value()
 
             if self._is_excel_input(path):
-                sheet_name, raw_df, proc_df = self._preview_excel_input(stop_first_col)
+                sheet_name, raw_df, proc_df, _, _ = self._preview_excel_input(stop_first_col)
                 self.current_sheet_name = sheet_name
             else:
                 raw_df, proc_df = self._preview_text_input(path, stop_first_col)
@@ -536,9 +543,9 @@ class EISPreprocessingWindow(tk.Toplevel):
                     return
 
                 processed_sheets = {
-                    sheet_name: entry["proc_df"]
+                    sheet_name: entry["export_df"]
                     for sheet_name, entry in self.sheet_cache.items()
-                    if entry.get("proc_df") is not None
+                    if entry.get("export_df") is not None
                 }
 
                 out_path = export_processed_sheets_over_original_workbook(
@@ -790,9 +797,9 @@ class EISPreprocessingWindow(tk.Toplevel):
             return
 
         processed_sheets = {
-            sheet_name: entry["proc_df"]
+            sheet_name: entry["export_df"]
             for sheet_name, entry in self.sheet_cache.items()
-            if entry.get("proc_df") is not None
+            if entry.get("export_df") is not None
         }
 
         export_processed_sheets_over_original_workbook(
@@ -818,7 +825,14 @@ class EISPreprocessingWindow(tk.Toplevel):
 
         try:
             stop_first_col = self._get_stop_first_col_value()
-            sheet_name, raw_df, proc_df = self._preview_excel_input(stop_first_col)
+            sheet_name, raw_df, proc_df, export_df, export_meta = self._preview_excel_input(stop_first_col)
+
+            final_export_df = build_processed_export_sheet(
+                export_df=export_df,
+                raw_df=raw_df,
+                proc_df=proc_df,
+                export_meta=export_meta,
+            )
 
             params = self._collect_current_params()
 
@@ -826,6 +840,7 @@ class EISPreprocessingWindow(tk.Toplevel):
             self.sheet_cache[sheet_name] = {
                 "raw_df": raw_df.copy(),
                 "proc_df": proc_df.copy(),
+                "export_df": final_export_df.copy(),
                 "params": params.copy(),
                 "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             }

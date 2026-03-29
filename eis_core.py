@@ -151,8 +151,9 @@ def preprocess_eclab_text_to_dataframe(
 
 def _truncate_normalized_df_at_stop(df: pd.DataFrame, stop_first_col: float | None) -> pd.DataFrame:
     """
-    Tronque un DataFrame normalisé (freq, R, Im) quand la première colonne
-    atteint ou franchit la valeur demandée, en conservant la ligne seuil.
+    Tronque un DataFrame normalisé (freq, R, Im) quand la fréquence
+    atteint ou passe sous la valeur demandée.
+    Hypothèse: balayage toujours de haute fréquence vers basse fréquence.
     """
     if stop_first_col is None or df.empty:
         return df.reset_index(drop=True).copy()
@@ -162,24 +163,14 @@ def _truncate_normalized_df_at_stop(df: pd.DataFrame, stop_first_col: float | No
         return df.reset_index(drop=True).copy()
 
     keep_until = len(df)
-    prev_val = None
-    scan_direction = 0  # +1 ascending, -1 descending
 
     for idx, current in enumerate(freq_values.to_numpy(dtype=float)):
-        if prev_val is not None and scan_direction == 0 and not math.isclose(current, prev_val, rel_tol=0.0, abs_tol=1e-18):
-            scan_direction = +1 if current > prev_val else -1
+        if np.isnan(current):
+            continue
 
-        reached = math.isclose(current, stop_first_col, rel_tol=0.0, abs_tol=1e-12)
-        if scan_direction == -1:
-            reached = reached or (current <= stop_first_col)
-        elif scan_direction == +1:
-            reached = reached or (current >= stop_first_col)
-
-        if reached:
+        if math.isclose(current, stop_first_col, rel_tol=0.0, abs_tol=1e-12) or (current <= stop_first_col):
             keep_until = idx + 1
             break
-
-        prev_val = current
 
     return df.iloc[:keep_until].copy().reset_index(drop=True)
 
@@ -247,6 +238,144 @@ def preprocess_eis_dataframe(
     out = _truncate_normalized_df_at_stop(out, stop_first_col)
     return out.reset_index(drop=True)
 
+def prepare_eis_excel_sheet_for_export(
+    table_df: pd.DataFrame,
+    *,
+    keep_n_cols: int = 3,
+    negate_col3: bool = False,
+    stop_first_col: float | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    """
+    Prépare une feuille Excel pour le preprocessing en séparant:
+
+    - raw_df : vue normalisée pour calcul/plot, colonnes freq/R/Im
+    - export_df : vue exportable avec headers originaux et N colonnes originales
+    - export_meta : infos nécessaires pour réinjecter freq/R/Im traités
+      dans les bonnes colonnes d'origine
+    """
+    if table_df is None:
+        raise ValueError("Aucune table fournie.")
+
+    work = table_df.copy()
+    work = work.dropna(axis=0, how="all")
+    work = work.dropna(axis=1, how="all")
+
+    if work.empty:
+        raise ValueError("La table est vide.")
+
+    n_cols = max(int(keep_n_cols), 3)
+    n_cols = min(n_cols, work.shape[1])
+
+    if n_cols < 3:
+        raise ValueError("La feuille ne contient pas au moins 3 colonnes exploitables.")
+
+    export_df = work.iloc[:, :n_cols].copy().reset_index(drop=True)
+
+    selected = {}
+    im_sign = +1
+
+    for col in export_df.columns:
+        role, sign = _classify_header(col)
+        if role and role not in selected:
+            selected[role] = col
+            if role == "Im":
+                im_sign = sign if sign is not None else +1
+
+    detected = {"freq", "R", "Im"}.issubset(selected)
+
+    if detected:
+        freq_col = selected["freq"]
+        r_col = selected["R"]
+        im_col = selected["Im"]
+    else:
+        freq_col = export_df.columns[0]
+        r_col = export_df.columns[1]
+        im_col = export_df.columns[2]
+
+    raw_df = export_df[[freq_col, r_col, im_col]].copy()
+    raw_df.columns = ["freq", "R", "Im"]
+
+    for c in ["freq", "R", "Im"]:
+        raw_df[c] = raw_df[c].astype(str).str.replace(",", ".", regex=False)
+        raw_df[c] = pd.to_numeric(raw_df[c], errors="coerce")
+
+    valid_mask = raw_df[["freq", "R", "Im"]].notna().all(axis=1)
+
+    export_df = export_df.loc[valid_mask].reset_index(drop=True)
+    raw_df = raw_df.loc[valid_mask].reset_index(drop=True)
+
+    if detected and im_sign == -1:
+        raw_df["Im"] = -raw_df["Im"]
+
+    if negate_col3:
+        raw_df["Im"] = -raw_df["Im"]
+
+    raw_df = _truncate_normalized_df_at_stop(raw_df, stop_first_col)
+    export_df = export_df.iloc[:len(raw_df)].copy().reset_index(drop=True)
+
+    export_meta = {
+        "freq_col": freq_col,
+        "R_col": r_col,
+        "Im_col": im_col,
+        "im_sign": im_sign,
+    }
+
+    return raw_df.reset_index(drop=True), export_df, export_meta
+
+
+def build_processed_export_sheet(
+    export_df: pd.DataFrame,
+    raw_df: pd.DataFrame,
+    proc_df: pd.DataFrame,
+    export_meta: dict,
+) -> pd.DataFrame:
+    """
+    Repart de la vue exportable d'origine et remplace seulement les colonnes
+    freq/R/Im par les valeurs traitées, sans toucher aux autres colonnes
+    ni aux noms d'en-tête.
+    """
+    if export_df is None:
+        raise ValueError("export_df est manquant.")
+    if raw_df is None or proc_df is None:
+        raise ValueError("raw_df ou proc_df est manquant.")
+
+    if export_df.empty:
+        return export_df.copy()
+
+    if proc_df.empty:
+        return export_df.iloc[:0].copy()
+
+    raw_freq = pd.to_numeric(raw_df["freq"], errors="coerce").to_numpy(dtype=float)
+    proc_freq = pd.to_numeric(proc_df["freq"], errors="coerce").to_numpy(dtype=float)
+
+    keep_rows = []
+    j = 0
+
+    for i, f in enumerate(raw_freq):
+        if j >= len(proc_freq):
+            break
+
+        if math.isclose(f, proc_freq[j], rel_tol=0.0, abs_tol=1e-12):
+            keep_rows.append(i)
+            j += 1
+
+    out = export_df.iloc[keep_rows].copy().reset_index(drop=True)
+    proc_aligned = proc_df.iloc[:len(out)].copy().reset_index(drop=True)
+
+    freq_col = export_meta["freq_col"]
+    r_col = export_meta["R_col"]
+    im_col = export_meta["Im_col"]
+    im_sign = export_meta["im_sign"]
+
+    out[freq_col] = proc_aligned["freq"].to_list()
+    out[r_col] = proc_aligned["R"].to_list()
+
+    if im_sign == -1:
+        out[im_col] = (-proc_aligned["Im"]).to_list()
+    else:
+        out[im_col] = proc_aligned["Im"].to_list()
+
+    return out
 
 def read_eis_excel_workbook(input_path: str | Path) -> dict[str, pd.DataFrame]:
     """
@@ -324,16 +453,12 @@ def _processed_df_to_export_df(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _write_df_to_openpyxl_sheet(ws, df: pd.DataFrame):
-    export_df = _processed_df_to_export_df(df)
+    for j, col in enumerate(df.columns, start=1):
+        ws.cell(row=1, column=j, value=col)
 
-    ws.cell(row=1, column=1, value="freq_Hz")
-    ws.cell(row=1, column=2, value="Zprime_Ohm")
-    ws.cell(row=1, column=3, value="Zdoubleprime_Ohm")
-
-    for i, row in enumerate(export_df.itertuples(index=False, name=None), start=2):
-        ws.cell(row=i, column=1, value=row[0])
-        ws.cell(row=i, column=2, value=row[1])
-        ws.cell(row=i, column=3, value=row[2])
+    for i, row in enumerate(df.itertuples(index=False, name=None), start=2):
+        for j, value in enumerate(row, start=1):
+            ws.cell(row=i, column=j, value=value)
 
 
 def export_processed_sheets_over_original_workbook(
@@ -404,8 +529,7 @@ def export_processed_sheets_over_original_workbook(
             used_names.add(safe_name)
 
             if original_name in processed_sheets:
-                export_df = _processed_df_to_export_df(processed_sheets[original_name])
-                export_df.to_excel(writer, sheet_name=safe_name, index=False)
+                processed_sheets[original_name].to_excel(writer, sheet_name=safe_name, index=False)
             else:
                 original_df.to_excel(writer, sheet_name=safe_name, index=False)
 
